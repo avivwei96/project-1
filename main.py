@@ -103,7 +103,7 @@ def find_lines_with_hough_transform(edges, frame):
     if lines is not None:
         for line in lines:
             x1, y1, x2, y2 = line[0]
-            slope = (y2 - y1) / (x2 - x1 + 1e-6).
+            slope = (y2 - y1) / (x2 - x1 + 1e-6)
             
             if y1 > frame.shape[0]//2:
                 if -1.8 < slope < 0:
