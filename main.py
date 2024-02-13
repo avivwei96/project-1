@@ -60,9 +60,10 @@ def find_edges(frame, threshold_value=180):
     kernel = np.ones((3, 3), np.uint8)
 
     # Apply dilation to the blurred binary image
-    dilated_frame = cv2.erode(blurred_frame, kernel, iterations=1)
+    erode_frame = cv2.erode(blurred_frame, kernel, iterations=1)
+    dilated_frame = cv2.dilate(erode_frame, kernel, iterations=1)
 
-    dilated_frame = crop_right_corners(dilated_frame, corner_size=100)
+    dilated_frame = crop_right_corners(dilated_frame, corner_size=150)
 
     # Apply Canny edge detection on the dilated black and white image
     edges = cv2.Canny(dilated_frame, 50, 150)
@@ -77,17 +78,22 @@ def crop_right_corners(image, corner_size=50):
     # Get the dimensions of the image
     height, width = image.shape[:2]
     
-    # Define the size of the corners to be cropped
-    # 'corner_size' specifies the height and width of the corner rectangles
+    # Draw a black line to create a diagonal on the top right corner
+    cv2.line(mask, (width - corner_size, 0), (width, corner_size), (0, 0, 0), thickness=10)
     
-    # Fill the top right corner of the mask with black (0)
-    mask[:corner_size, width - corner_size:] = 0
+    # Draw a black line to create a diagonal on the bottom right corner
+    cv2.line(mask, (width - corner_size, height), (width, height - corner_size), (0, 0, 0), thickness=10)
     
-    # Fill the bottom right corner of the mask with black (0)
-    mask[height - corner_size:, width - corner_size:] = 0
+    # Fill below the diagonal line for the top right corner to make it solid
+    for i in range(corner_size):
+        cv2.line(mask, (width - i, 0), (width, i), (0, 0, 0), thickness=1)
+    
+    # Fill above the diagonal line for the bottom right corner to make it solid
+    for i in range(corner_size):
+        cv2.line(mask, (width - i, height), (width, height - i), (0, 0, 0), thickness=1)
 
     # Apply the mask to the image using bitwise_and to keep the central and left parts unchanged
-    cropped_image = cv2.bitwise_and(image, mask)
+    cropped_image = cv2.bitwise_and(image, mask.astype(np.uint8))
 
     return cropped_image
 
@@ -176,6 +182,9 @@ def combine_lines(old_line, n_line, a=0.9):
     if np.any(n_line == None): 
         return old_line
     
+    # To check if the line change is not resable
+    if n_line[0] * old_line[0] < 0:
+        return old_line
     
     res = np.array([a*old_line[0] + (1-a)*n_line[0],a*old_line[1] + (1-a)*n_line[1]])
     return res
@@ -253,9 +262,9 @@ def display_frames(n_frames, delay=25):
 
 def main():
     video_path = "data/roadCam.mp4"
-    frames = extract_frames(video_path, frame_skip=10)
+    frames = extract_frames(video_path, frame_skip=5)
     n_frames = process_video_frames(frames)
-    display_frames(n_frames, 250)
+    display_frames(n_frames, 125)
 
 if __name__ == "__main__":
     main()
