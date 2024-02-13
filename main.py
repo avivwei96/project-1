@@ -5,7 +5,7 @@ import warnings
 from tqdm import tqdm
 
 
-def extract_frames(video_path):
+def extract_frames(video_path, frame_skip=1):
     # Check if the video file exists
     if not os.path.exists(video_path):
         print("Error: Video file not found")
@@ -22,13 +22,9 @@ def extract_frames(video_path):
         ret, frame = video_capture.read()
 
         if ret:
-            # Convert the frame to grayscale or manipulate as needed
-            # frame = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-            
             # Append the frame to the list
-            if i % 5 == 0:
+            if i % frame_skip == 0:
                 frames.append(frame)
-
             i += 1
         else:
             break
@@ -42,7 +38,7 @@ def extract_frames(video_path):
 def cropLandScapeAndRotate(frame):
     # Crop the frame to keep only the bottom three-fifths of the height and the middle three-fifths of the width
     height, width = frame.shape[:2]
-    cropped_frame = frame[(height * 3) // 5:, width // 5:(width * 4) // 5]
+    cropped_frame = frame[(height * 3) // 5:(height * 9) // 10 , width // 5:(width * 4) // 5]
     
     # Rotate the cropped frame by 180 degrees
     rotated_frame = cv2.rotate(cropped_frame, cv2.ROTATE_90_CLOCKWISE)
@@ -110,7 +106,7 @@ def find_lines_with_hough_transform(edges, frame):
                     line_right_x.extend([x1, x2])
                     line_right_y.extend([y1, y2])
             else:
-                if 0 < slope < 1.8:
+                if 0 < slope < 1.4:
                     line_left_x.extend([x1, x2])
                     line_left_y.extend([y1, y2])
 
@@ -158,8 +154,7 @@ def draw_line_on_frame(frame, line_params, color=(0, 255, 0), thickness=2):
     # Ensure slope is not zero to avoid division by zero error
     if np.any(slope== 0):
         slope += 0.0000001
-    
-    slope += 0.0000001
+
     # Set x1 to zero and calculate corresponding y1 using the intercept
     x1 = 0
     y1 = int(intercept)
@@ -174,7 +169,7 @@ def draw_line_on_frame(frame, line_params, color=(0, 255, 0), thickness=2):
     cv2.line(frame, (x1, y1), (x2, y2), color, thickness)
 
 
-def combine_lines(old_line, n_line, a=0.7):
+def combine_lines(old_line, n_line, a=0.9):
 
     if np.any(old_line == None):
         return n_line
@@ -186,47 +181,121 @@ def combine_lines(old_line, n_line, a=0.7):
     return res
 
 
-def line_switch(frame):
-    pass
+def process_frame(frame):
+    Rotated_Cropped_frame = cropLandScapeAndRotate(frame)
+    canny_frame = find_edges(Rotated_Cropped_frame)
+    line_left_x, line_left_y, line_right_x, line_right_y = find_lines_with_hough_transform(canny_frame, Rotated_Cropped_frame)
+    return Rotated_Cropped_frame, line_left_x, line_left_y, line_right_x, line_right_y
+
+
+def update_line(curr_line, new_line_data):
+    new_line = ransac_line_fit(new_line_data[0], new_line_data[1])
+    updated_line = combine_lines(curr_line, new_line[0])
+    return updated_line
+
+
+def update_line(curr_line, new_line_data):
+    new_line = ransac_line_fit(new_line_data[0], new_line_data[1])
+    updated_line = combine_lines(curr_line, new_line[0])
+    return updated_line , new_line
+
+
+def draw_line_if_exists(frame, line, color, thickness):
+    if line is not None:
+        draw_line_on_frame(frame, line, color=color, thickness=thickness)
+
+
+def is_swtich_lane(left, right, frame_y_size):
+
+    if np.any(left == None):
+        if np.abs(left[0][1]) > frame_y_size // 20:
+            return True, True
+    if np.any(right == None): 
+        if right[0][1] < frame_y_size * 7 // 9:
+            return True, False
+    return False, False
+
+
+def process_video_frames(frames):
+    """
+    Processes each frame from the video, updating and drawing lane lines.
+    Parameters:
+    - frames: A list of video frames to process.
+    Returns:
+    - A list of processed frames with lane lines drawn on them.
+    """
+    n_frames = []  # Initialize the list to store processed frames
+    curr_left_line, curr_right_line = None, None  # Initialize current lane lines to None
+    is_line_swap = False
+    time_counter = 0
+    # Loop through each frame in the video
+    for frame in tqdm(frames):
+
+
+        # Rotate and crop the frame, then apply edge detection and find line segments using Hough Transform
+        processed_frame, line_left_x, line_left_y, line_right_x, line_right_y = process_frame(frame)
+
+        if is_line_swap:
+            time_counter = 1
+
+        if time_counter % 50 != 0:
+            time_counter += 1
+            is_line_swap = True
+        else:
+            time_counter = 0
+
+        if is_line_swap and time_counter == 1:
+            if is_left_side:
+                curr_right_line = n_left[0]
+                curr_left_line = None
+            else:
+                curr_left_line = n_right[0]
+                curr_right_line = None
+        
+        # Update the current left lane line based on detected line segments
+        curr_left_line, n_left = update_line(curr_left_line, (line_left_x, line_left_y))
+        # Update the current right lane line based on detected line segments
+        curr_right_line, n_right = update_line(curr_right_line, (line_right_x, line_right_y))
+
+        is_line_swap, is_left_side = is_swtich_lane(n_left, n_right, frame.shape[0])
+
+        # If a lane line exists, draw it on the frame
+        if not is_line_swap:
+            draw_line_if_exists(processed_frame, curr_right_line, color=(0, 255, 0), thickness=2)
+            draw_line_if_exists(processed_frame, n_left[0], color=(255, 255, 0), thickness=2)
+            draw_line_if_exists(processed_frame, curr_left_line, color=(0, 0, 255), thickness=2)
+        else:
+            if is_left_side:
+                draw_line_if_exists(processed_frame, curr_right_line, color=(255, 255, 0), thickness=4)
+            else:
+                draw_line_if_exists(processed_frame, curr_left_line, color=(0, 255, 255), thickness=4)
+                # Check if there is a lane switch
+        # Rotate the processed frame back to its original orientation and add it to the list of processed frames
+        n_frames.append(cv2.rotate(processed_frame, cv2.ROTATE_90_COUNTERCLOCKWISE))
+
+    return n_frames  # Return the list of processed frames
+
+
+def display_frames(n_frames, delay=25):
+    """
+    Displays each frame in the list of processed frames.
+    Parameters:
+    - n_frames: A list of processed frames to display.
+    The function displays each frame in a window and waits for a key press
+    to proceed to the next frame. Pressing 'q' will exit the loop.
+    """
+    for frame in n_frames:
+        cv2.imshow('Frame', frame)
+        if cv2.waitKey(delay) & 0xFF == ord('q'):
+            break
+    cv2.destroyAllWindows()
+
 
 def main():
-    # Path to the video file
     video_path = "data/roadCam.mp4"
-
-    # Extract frames from the video
-    frames = extract_frames(video_path)
-
-    n_frames = []
-    curr_left_line = None
-    curr_right_line = None
-
-    # Process the frames (e.g., display, save, etc.)
-    for frame in tqdm(frames):
-        Rotated_Cropped_frame = cropLandScapeAndRotate(frame)
-        canny_frame = find_edges(Rotated_Cropped_frame)
-        line_left_x,  line_left_y, line_right_x, line_right_y = find_lines_with_hough_transform(canny_frame, Rotated_Cropped_frame)
-
-        line_left = ransac_line_fit(line_left_x, line_left_y)
-        curr_left_line = combine_lines(curr_left_line, line_left[0])
-        if curr_left_line is not None:
-            draw_line_on_frame(Rotated_Cropped_frame, curr_left_line, color=(0, 255, 255), thickness=2)
-
-        line_right = ransac_line_fit(line_right_x, line_right_y)
-
-        curr_right_line = combine_lines(curr_right_line, line_right[0])
-        if curr_left_line is not None: 
-            draw_line_on_frame(Rotated_Cropped_frame, curr_right_line, color=(0, 255, 0), thickness=2)
-
-        n_frames.append(cv2.rotate(Rotated_Cropped_frame, cv2.ROTATE_90_COUNTERCLOCKWISE))
-
-
-    for frame in n_frames:
-        cv2.imshow('Frame', frame)  # Provide a window name for display
-        if cv2.waitKey(125) & 0xFF == ord('q'):
-            break  
-
-    # Close all OpenCV windows
-    cv2.destroyAllWindows()
+    frames = extract_frames(video_path, frame_skip=10)
+    n_frames = process_video_frames(frames)
+    display_frames(n_frames, 250)
 
 if __name__ == "__main__":
     main()
