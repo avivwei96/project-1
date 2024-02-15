@@ -5,6 +5,7 @@ import warnings
 from tqdm import tqdm
 
 
+
 def extract_frames(video_path, frame_skip=1):
     # Check if the video file exists
     if not os.path.exists(video_path):
@@ -98,25 +99,30 @@ def crop_right_corners(image, top_corner_size=50, bottom_corner_size=100):
     return cropped_image
 
 
-def find_lines_with_hough_transform(edges, frame):
+def find_lines_with_hough_transform(edges, frame, mid_range_ret=10, mid_ret = 0.47):
     lines = cv2.HoughLinesP(edges, rho=1, theta=np.pi/180, threshold=20, minLineLength=25, maxLineGap=10)
-    line_left_x, line_left_y, line_right_x, line_right_y = [], [], [], []
+    line_left_x, line_left_y, line_right_x, line_right_y, line_mid_x, line_mid_y = [], [], [], [], [], []
+    mid_range = frame.shape[1] * (mid_range_ret/100)  # Define a range around the middle mid_range_ret% of the frame width
     
     if lines is not None:
         for line in lines:
             x1, y1, x2, y2 = line[0]
-            slope = (y2 - y1) / (x2 - x1 + 1e-6)
+            slope = (y2 - y1) / (x2 - x1 + 1e-8)  # Calculate the slope
             
-            if y1 > frame.shape[0]//2:
-                if -1.8 < slope < 0:
-                    line_right_x.extend([x1, x2])
-                    line_right_y.extend([y1, y2])
-            else:
-                if 0 < slope < 1.4:
-                    line_left_x.extend([x1, x2])
-                    line_left_y.extend([y1, y2])
+            # Right lines
+            if y1 > frame.shape[0] * mid_ret + mid_range and -1.8 < slope < 0:
+                line_right_x.extend([x1, x2])
+                line_right_y.extend([y1, y2])
+            # Left lines
+            elif y1 < frame.shape[0] * mid_ret - mid_range and 0 < slope < 1.4:
+                line_left_x.extend([x1, x2])
+                line_left_y.extend([y1, y2])
+            # Midline
+            elif np.abs(slope) < 0.5:
+                line_mid_x.extend([x1, x2])
+                line_mid_y.extend([y1, y2])
 
-    return np.array(line_left_x), np.array(line_left_y), np.array(line_right_x), np.array(line_right_y)
+    return np.array(line_left_x), np.array(line_left_y), np.array(line_right_x), np.array(line_right_y), np.array(line_mid_x), np.array(line_mid_y)
 
 
 def ransac_line_fit(x, y, threshold=10, num_iterations=1000, min_inliers=2):
@@ -175,7 +181,7 @@ def draw_line_on_frame(frame, line_params, color=(0, 255, 0), thickness=2):
     cv2.line(frame, (x1, y1), (x2, y2), color, thickness)
 
 
-def combine_lines(old_line, n_line, a=0.7):
+def combine_lines(old_line, n_line, a=0.9):
 
     if np.any(old_line == None):
         return n_line
@@ -191,10 +197,17 @@ def combine_lines(old_line, n_line, a=0.7):
 
 
 def process_frame(frame):
+    # Rotate and crop the frame
     Rotated_Cropped_frame = cropLandScapeAndRotate(frame)
+
+    # Apply edge detection to the rotated and cropped frame
     canny_frame = find_edges(Rotated_Cropped_frame)
-    line_left_x, line_left_y, line_right_x, line_right_y = find_lines_with_hough_transform(canny_frame, Rotated_Cropped_frame)
-    return Rotated_Cropped_frame, line_left_x, line_left_y, line_right_x, line_right_y
+
+    # Use Hough Transform to find left, right, and midline lines in the edge-detected image
+    line_left_x, line_left_y, line_right_x, line_right_y, line_mid_x, line_mid_y = find_lines_with_hough_transform(canny_frame, Rotated_Cropped_frame)
+
+    # Return the processed frame along with the coordinates of the left, right, and midline lines
+    return Rotated_Cropped_frame, line_left_x, line_left_y, line_right_x, line_right_y, line_mid_x, line_mid_y
 
 
 def update_line(curr_line, new_line_data):
@@ -212,36 +225,52 @@ def update_line(curr_line, new_line_data):
 def draw_line_if_exists(frame, line, color, thickness):
     if line is not None:
         draw_line_on_frame(frame, line, color=color, thickness=thickness)
+        
 
-
-def process_video_frames(frames):
+def process_video_frames(frames, max_mid_time=1, mid_range_ret=15, mid_ret=0.47):
     """
-    Processes each frame from the video, updating and drawing lane lines.
+    Processes each frame from the video, updating and drawing lane lines, midline, and the mid-range area for debugging.
     Parameters:
     - frames: A list of video frames to process.
+    - max_mid_time: Maximum number of consecutive frames the midline is drawn before being reset.
+    - mid_range_ret: Percentage of the frame width considered as the mid-range area.
     Returns:
-    - A list of processed frames with lane lines drawn on them.
+    - A list of processed frames with debugging visualizations.
     """
     n_frames = []  # Initialize the list to store processed frames
-    curr_left_line, curr_right_line = None, None  # Initialize current lane lines to None
+    curr_left_line, curr_right_line, curr_mid_line = None, None, None  # Initialize current lane lines and midline to None
+    mid_counter = 1
+
+
+
     # Loop through each frame in the video
     for frame in tqdm(frames):
-
         # Rotate and crop the frame, then apply edge detection and find line segments using Hough Transform
-        processed_frame, line_left_x, line_left_y, line_right_x, line_right_y = process_frame(frame)
-        # Update the current left lane line based on detected line segments
-        curr_left_line, n_left = update_line(curr_left_line, (line_left_x, line_left_y))
-        # Update the current right lane line based on detected line segments
-        curr_right_line, n_right = update_line(curr_right_line, (line_right_x, line_right_y))
+        processed_frame, line_left_x, line_left_y, line_right_x, line_right_y, line_mid_x, line_mid_y = process_frame(frame)
 
-        # If a lane line exists, draw it on the frame
-        draw_line_if_exists(processed_frame, curr_right_line, color=(0, 255, 0), thickness=2)
-        draw_line_if_exists(processed_frame, curr_left_line, color=(0, 0, 255), thickness=2)
+        # Update and draw lines based on detections
+        curr_left_line, _ = update_line(curr_left_line, (line_left_x, line_left_y))
+        curr_right_line, _ = update_line(curr_right_line, (line_right_x, line_right_y))
+        curr_mid_line, _ = update_line(curr_mid_line, (line_mid_x, line_mid_y))
+
+        if curr_mid_line is not None:
+            # Draw midline
+            draw_line_if_exists(processed_frame, curr_mid_line, color=(255, 255, 0), thickness=2)  # Yellow for midline
+            curr_left_line, curr_right_line = None, None
+            if mid_counter % max_mid_time == 0:
+                curr_mid_line = None
+                mid_counter = 0
+            mid_counter += 1
+        else:
+            # Draw left and right lines
+            draw_line_if_exists(processed_frame, curr_right_line, color=(0, 255, 0), thickness=2)  # Green for right line
+            draw_line_if_exists(processed_frame, curr_left_line, color=(0, 0, 255), thickness=2)  # Blue for left line
 
         # Rotate the processed frame back to its original orientation and add it to the list of processed frames
         n_frames.append(cv2.rotate(processed_frame, cv2.ROTATE_90_COUNTERCLOCKWISE))
 
     return n_frames  # Return the list of processed frames
+
 
 
 def display_frames(n_frames, delay=25):
@@ -261,9 +290,9 @@ def display_frames(n_frames, delay=25):
 
 def main():
     video_path = "data/roadCam.mp4"
-    frames = extract_frames(video_path, frame_skip=5)
+    frames = extract_frames(video_path, frame_skip=20)
     n_frames = process_video_frames(frames)
-    display_frames(n_frames, 125)
+    display_frames(n_frames, 500)
 
 if __name__ == "__main__":
     main()
