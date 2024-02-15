@@ -46,7 +46,7 @@ def cropLandScapeAndRotate(frame):
     return rotated_frame
 
 
-def find_edges(frame, threshold_value=180):
+def find_edges(frame, threshold_value=180, top_corner_size=80, bottom_corner_size=200, blurred_kernel_size=5, erode_kernel_size=3):
     # Convert the frame to grayscale
     gray_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
     
@@ -54,16 +54,16 @@ def find_edges(frame, threshold_value=180):
     _, black_and_white_frame = cv2.threshold(gray_frame, threshold_value, 255, cv2.THRESH_BINARY)
     
     # Apply Gaussian blur to reduce noise in the binary image
-    blurred_frame = cv2.GaussianBlur(black_and_white_frame, (5, 5), 0)
+    blurred_frame = cv2.GaussianBlur(black_and_white_frame, (blurred_kernel_size, blurred_kernel_size), 0)
 
     # Define a kernel for the dilation. You can adjust the size as needed.
-    kernel = np.ones((3, 3), np.uint8)
+    kernel = np.ones((erode_kernel_size, erode_kernel_size), np.uint8)
 
     # Apply dilation to the blurred binary image
     erode_frame = cv2.erode(blurred_frame, kernel, iterations=1)
     dilated_frame = cv2.dilate(erode_frame, kernel, iterations=1)
 
-    dilated_frame = crop_right_corners(dilated_frame, corner_size=150)
+    dilated_frame = crop_right_corners(dilated_frame, top_corner_size=top_corner_size, bottom_corner_size=bottom_corner_size)
 
     # Apply Canny edge detection on the dilated black and white image
     edges = cv2.Canny(dilated_frame, 50, 150)
@@ -71,7 +71,7 @@ def find_edges(frame, threshold_value=180):
     return edges
 
 
-def crop_right_corners(image, corner_size=50):
+def crop_right_corners(image, top_corner_size=50, bottom_corner_size=100):
     # Create a mask filled with ones (white) with the same dimensions as the image
     mask = np.ones_like(image) * 255
     
@@ -79,17 +79,17 @@ def crop_right_corners(image, corner_size=50):
     height, width = image.shape[:2]
     
     # Draw a black line to create a diagonal on the top right corner
-    cv2.line(mask, (width - corner_size, 0), (width, corner_size), (0, 0, 0), thickness=10)
+    cv2.line(mask, (width - top_corner_size, 0), (width, top_corner_size), (0, 0, 0), thickness=10)
     
     # Draw a black line to create a diagonal on the bottom right corner
-    cv2.line(mask, (width - corner_size, height), (width, height - corner_size), (0, 0, 0), thickness=10)
+    cv2.line(mask, (width - bottom_corner_size, height), (width, height - bottom_corner_size), (0, 0, 0), thickness=10)
     
     # Fill below the diagonal line for the top right corner to make it solid
-    for i in range(corner_size):
+    for i in range(top_corner_size):
         cv2.line(mask, (width - i, 0), (width, i), (0, 0, 0), thickness=1)
     
     # Fill above the diagonal line for the bottom right corner to make it solid
-    for i in range(corner_size):
+    for i in range(bottom_corner_size):
         cv2.line(mask, (width - i, height), (width, height - i), (0, 0, 0), thickness=1)
 
     # Apply the mask to the image using bitwise_and to keep the central and left parts unchanged
@@ -175,7 +175,7 @@ def draw_line_on_frame(frame, line_params, color=(0, 255, 0), thickness=2):
     cv2.line(frame, (x1, y1), (x2, y2), color, thickness)
 
 
-def combine_lines(old_line, n_line, a=0.9):
+def combine_lines(old_line, n_line, a=0.7):
 
     if np.any(old_line == None):
         return n_line
@@ -226,7 +226,6 @@ def process_video_frames(frames):
     curr_left_line, curr_right_line = None, None  # Initialize current lane lines to None
     # Loop through each frame in the video
     for frame in tqdm(frames):
-
 
         # Rotate and crop the frame, then apply edge detection and find line segments using Hough Transform
         processed_frame, line_left_x, line_left_y, line_right_x, line_right_y = process_frame(frame)
