@@ -36,6 +36,37 @@ def extract_frames(video_path, frame_skip=1):
     return frames
 
 
+def applyPerspectiveAndReturnMatrix(frame):
+    height, width = frame.shape[:2]
+
+    # Define source points (e.g., corners of a trapezoid in the original image)
+    src_points = np.float32([
+        [0, height],  # Bottom-left corner 
+        [width, height - 200],  # Bottom-right corner 
+        [0, 0],  # Top-left corner 
+        [width, 200],  # Top-right
+    ])
+
+    # Define destination points (e.g., corners of a rectangle that fills the frame)
+    dst_points = np.float32([
+        [0, height],  # Bottom-left corner after transformation
+        [width + 100, height],  # Bottom-right corner after transformation
+        [0, 0],  # Top-left corner after transformation
+        [width + 100 , 0],  # Top-right corner after transformation
+    ])
+
+    # Compute the perspective transform matrix
+    M = cv2.getPerspectiveTransform(src_points, dst_points)
+
+    # Apply the perspective transformation to make distant objects appear closer
+    transformed_frame = cv2.warpPerspective(frame, M, (width, height))
+
+    # Compute the inverse transformation matrix for the reverse operation
+    M_inv = cv2.getPerspectiveTransform(dst_points, src_points)
+
+    return transformed_frame, M, M_inv
+
+
 def cropLandScapeAndRotate(frame):
     # Crop the frame to keep only the bottom three-fifths of the height and the middle three-fifths of the width
     height, width = frame.shape[:2]
@@ -47,7 +78,7 @@ def cropLandScapeAndRotate(frame):
     return rotated_frame
 
 
-def find_edges(frame, threshold_value=180, top_corner_size=80, bottom_corner_size=200, blurred_kernel_size=5, erode_kernel_size=3):
+def find_edges(frame, threshold_value=180, top_corner_size=0, bottom_corner_size=0, blurred_kernel_size=5, erode_kernel_size=3):
     # Convert the frame to grayscale
     gray_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
     
@@ -247,6 +278,7 @@ def process_video_frames(frames, max_mid_time=1, mid_range_ret=15, mid_ret=0.47)
     for frame in tqdm(frames):
         # Rotate and crop the frame, then apply edge detection and find line segments using Hough Transform
         processed_frame, line_left_x, line_left_y, line_right_x, line_right_y, line_mid_x, line_mid_y = process_frame(frame)
+        processed_frame, _, _ = applyPerspectiveAndReturnMatrix(processed_frame)
 
         # Update and draw lines based on detections
         curr_left_line, _ = update_line(curr_left_line, (line_left_x, line_left_y))
