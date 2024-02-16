@@ -125,7 +125,7 @@ def find_lines_with_hough_transform(edges, frame, hough_threshold = 30):
     return np.array(line_left_x), np.array(line_left_y), np.array(line_right_x), np.array(line_right_y)
 
 
-def ransac_line_fit(x, y, threshold=10, num_iterations=1000, min_inliers=2):
+def ransac_line_fit(x, y, threshold=15, num_iterations=1000, min_inliers=2):
     best_line = None
     best_inliers_indices = []
 
