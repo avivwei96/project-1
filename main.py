@@ -39,12 +39,19 @@ def extract_frames(video_path, frame_skip=1):
 def cropLandScapeAndRotate(frame):
     # Crop the frame to keep only the bottom three-fifths of the height and the middle three-fifths of the width
     height, width = frame.shape[:2]
-    cropped_frame = frame[(height * 3) // 5 + 10:(height * 9) // 10 , width // 5:(width * 4) // 5]
+    cropped_frame = frame[int(height * 2.8) // 5:(height * 9) // 10 , width // 5:(width * 4) // 5].copy()
+    frame[int(height * 2.8) // 5:(height * 9) // 10 , width // 5:(width * 4) // 5] = [0, 0, 0]
     
     # Rotate the cropped frame by 180 degrees
     rotated_frame = cv2.rotate(cropped_frame, cv2.ROTATE_90_CLOCKWISE)
     
     return rotated_frame
+
+
+
+def paste_the_frame(frame, processed_part):
+    height, width = frame.shape[:2]
+    frame[int(height * 2.8) // 5:(height * 9) // 10 , width // 5:(width * 4) // 5] = processed_part
 
 
 def find_edges(frame, threshold_value=200, top_corner_size=100, bottom_corner_size=250, blurred_kernel_size=5, erode_kernel_size=3):
@@ -99,16 +106,17 @@ def crop_right_corners(image, top_corner_size=50, bottom_corner_size=100):
     return cropped_image
 
 
-def find_lines_with_hough_transform(edges, frame, mid_range_ret=22, mid_ret = 0.47):
-    lines = cv2.HoughLinesP(edges, rho=1, theta=np.pi/180, threshold=32, minLineLength=25, maxLineGap=20)
+def find_lines_with_hough_transform(edges, frame, mid_range_ret=22, mid_ret = 0.47, hough_threshold = 30):
+    lines = cv2.HoughLinesP(edges, rho=1, theta=np.pi/180, threshold=hough_threshold, minLineLength=25, maxLineGap=20)
     line_left_x, line_left_y, line_right_x, line_right_y, line_mid_x, line_mid_y = [], [], [], [], [], []
     mid_range = frame.shape[1] * (mid_range_ret/100)  # Define a range around the middle mid_range_ret% of the frame width
+
     
     if lines is not None:
         for line in lines:
             x1, y1, x2, y2 = line[0]
             slope = (y2 - y1) / (x2 - x1 + 1e-8)  # Calculate the slope
-            
+
             # Right lines
             if y1 > frame.shape[0] * mid_ret + mid_range and -1.8 < slope < 0:
                 line_right_x.extend([x1, x2])
@@ -125,7 +133,8 @@ def find_lines_with_hough_transform(edges, frame, mid_range_ret=22, mid_ret = 0.
     return np.array(line_left_x), np.array(line_left_y), np.array(line_right_x), np.array(line_right_y), np.array(line_mid_x), np.array(line_mid_y)
 
 
-def ransac_line_fit(x, y, threshold=10, num_iterations=1000, min_inliers=2):
+
+def ransac_line_fit(x, y, threshold=15, num_iterations=1000, min_inliers=2):
     best_line = None
     best_inliers_indices = []
 
@@ -181,7 +190,7 @@ def draw_line_on_frame(frame, line_params, color=(0, 255, 0), thickness=2):
     cv2.line(frame, (x1, y1), (x2, y2), color, thickness)
 
 
-def combine_lines(old_line, n_line, a=0.9):
+def combine_lines(old_line, n_line, a=0.95):
 
     if np.any(old_line == None):
         return n_line
@@ -266,11 +275,13 @@ def process_video_frames(frames, max_mid_time=60):
             draw_line_if_exists(processed_frame, curr_left_line, color=(0, 0, 255), thickness=2)  # Blue for left line
 
         # Rotate the processed frame back to its original orientation and add it to the list of processed frames
-        n_frame = cv2.rotate(processed_frame, cv2.ROTATE_90_COUNTERCLOCKWISE)
+        # n_frames.append(cv2.rotate(processed_frame, cv2.ROTATE_90_COUNTERCLOCKWISE))
+
+        paste_the_frame(frame, cv2.rotate(processed_frame, cv2.ROTATE_90_COUNTERCLOCKWISE))
         if mid_counter != 1:
-            frame = cv2.putText(n_frame, "Lane Switch Detected", (50, 50), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2)
-            
-        n_frames.append(n_frame)
+            frame = cv2.putText(frame, "Lane Switch Detected", (50, 50), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2)
+        n_frames.append(frame)
+
 
     return n_frames  # Return the list of processed frames
 
@@ -293,9 +304,9 @@ def display_frames(n_frames, delay=25):
 
 def main():
     video_path = "data/roadCam.mp4"
-    frames = extract_frames(video_path, frame_skip=5)
+    frames = extract_frames(video_path, frame_skip=2)
     n_frames = process_video_frames(frames)
-    display_frames(n_frames, 125)
+    display_frames(n_frames, 25)
 
 if __name__ == "__main__":
     main()
