@@ -5,7 +5,6 @@ import warnings
 from tqdm import tqdm
 
 
-
 def extract_frames(video_path, frame_skip=1):
     # Check if the video file exists
     if not os.path.exists(video_path):
@@ -36,11 +35,11 @@ def extract_frames(video_path, frame_skip=1):
     return frames
 
 
-def cropLandScapeAndRotate(frame):
+def cropLandScapeAndRotate(frame, height_top=0.6, height_bot=0.9, width_l=0.15, width_r=0.8):
     # Crop the frame to keep only the bottom three-fifths of the height and the middle three-fifths of the width
     height, width = frame.shape[:2]
-    cropped_frame = frame[int(height * 2.8) // 5:(height * 9) // 10 , width // 5:(width * 4) // 5].copy()
-    frame[int(height * 2.8) // 5:(height * 9) // 10 , width // 5:(width * 4) // 5] = [0, 0, 0]
+    cropped_frame = frame[int(height * height_top):int(height * height_bot) , int(width * width_l):int(width * width_r)].copy()
+    frame[int(height * height_top):int(height * height_bot) , int(width * width_l):int(width * width_r)] = [0, 0, 0]
     
     # Rotate the cropped frame by 180 degrees
     rotated_frame = cv2.rotate(cropped_frame, cv2.ROTATE_90_CLOCKWISE)
@@ -48,18 +47,19 @@ def cropLandScapeAndRotate(frame):
     return rotated_frame
 
 
-
-def paste_the_frame(frame, processed_part):
+def paste_the_frame(frame, processed_part,
+                    height_top=0.6, height_bot=0.9,
+                    width_l=0.15, width_r=0.8):
     height, width = frame.shape[:2]
-    frame[int(height * 2.8) // 5:(height * 9) // 10 , width // 5:(width * 4) // 5] = processed_part
+    frame[int(height * height_top):int(height * height_bot) , int(width * width_l):int(width * width_r)] = processed_part
 
 
-def find_edges(frame, threshold_value=200, top_corner_size=100, bottom_corner_size=250, blurred_kernel_size=5, erode_kernel_size=3):
+def find_edges(frame, threshold_value=130, top_threshold_value=255, top_corner_size=160, bottom_corner_size=160, blurred_kernel_size=5, erode_kernel_size=5):
     # Convert the frame to grayscale
     gray_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
     
     # Apply thresholding to convert the image to black and white
-    _, black_and_white_frame = cv2.threshold(gray_frame, threshold_value, 255, cv2.THRESH_BINARY)
+    _, black_and_white_frame = cv2.threshold(gray_frame, threshold_value, top_threshold_value, cv2.THRESH_BINARY)
     
     # Apply Gaussian blur to reduce noise in the binary image
     blurred_frame = cv2.GaussianBlur(black_and_white_frame, (blurred_kernel_size, blurred_kernel_size), 0)
@@ -69,12 +69,12 @@ def find_edges(frame, threshold_value=200, top_corner_size=100, bottom_corner_si
 
     # Apply dilation to the blurred binary image
     erode_frame = cv2.erode(blurred_frame, kernel, iterations=1)
-    dilated_frame = cv2.dilate(erode_frame, kernel, iterations=1)
 
-    dilated_frame = crop_right_corners(dilated_frame, top_corner_size=top_corner_size, bottom_corner_size=bottom_corner_size)
+    res_frame = crop_right_corners(erode_frame, top_corner_size=top_corner_size, bottom_corner_size=bottom_corner_size)
 
     # Apply Canny edge detection on the dilated black and white image
-    edges = cv2.Canny(dilated_frame, 50, 150)
+    edges = cv2.Canny(res_frame, 80, 150)
+  #  display_frames([edges], delay=10000)
 
     return edges
 
@@ -82,32 +82,34 @@ def find_edges(frame, threshold_value=200, top_corner_size=100, bottom_corner_si
 def crop_right_corners(image, top_corner_size=50, bottom_corner_size=100):
     # Create a mask filled with ones (white) with the same dimensions as the image
     mask = np.ones_like(image) * 255
-    
+
     # Get the dimensions of the image
     height, width = image.shape[:2]
-    
-    # Draw a black line to create a diagonal on the top right corner
-    cv2.line(mask, (width - top_corner_size, 0), (width, top_corner_size), (0, 0, 0), thickness=10)
-    
-    # Draw a black line to create a diagonal on the bottom right corner
-    cv2.line(mask, (width - bottom_corner_size, height), (width, height - bottom_corner_size), (0, 0, 0), thickness=10)
-    
-    # Fill below the diagonal line for the top right corner to make it solid
-    for i in range(top_corner_size):
-        cv2.line(mask, (width - i, 0), (width, i), (0, 0, 0), thickness=1)
-    
-    # Fill above the diagonal line for the bottom right corner to make it solid
-    for i in range(bottom_corner_size):
-        cv2.line(mask, (width - i, height), (width, height - i), (0, 0, 0), thickness=1)
+
+    # Draw a black filled polygon for the top right corner
+    top_triangle = np.array([
+        [width - top_corner_size, 0],  # Starting point
+        [width, 0],  # Top right corner of the image
+        [width, top_corner_size + 200]  # End point of the diagonal
+    ])
+    cv2.fillPoly(mask, [top_triangle], (0, 0, 0))
+
+    # Draw a black filled polygon for the bottom right corner
+    bottom_triangle = np.array([
+        [width - bottom_corner_size, height],  # Starting point
+        [width, height],  # Bottom right corner of the image
+        [width, height - bottom_corner_size - 200]  # End point of the diagonal
+    ])
+    cv2.fillPoly(mask, [bottom_triangle], (0, 0, 0))
 
     # Apply the mask to the image using bitwise_and to keep the central and left parts unchanged
-    cropped_image = cv2.bitwise_and(image, mask.astype(np.uint8))
+    cropped_image = cv2.bitwise_and(image, mask)
 
     return cropped_image
 
 
-def find_lines_with_hough_transform(edges, frame, mid_range_ret=22, mid_ret = 0.47, hough_threshold = 30):
-    lines = cv2.HoughLinesP(edges, rho=1, theta=np.pi/180, threshold=hough_threshold, minLineLength=25, maxLineGap=20)
+def find_lines_with_hough_transform(edges, frame, mid_range_ret=25, mid_ret = 0.47, hough_threshold=15, minLineLength=5, maxLineGap=25):
+    lines = cv2.HoughLinesP(edges, rho=1, theta=np.pi/180, threshold=hough_threshold, minLineLength=minLineLength, maxLineGap=maxLineGap)
     line_left_x, line_left_y, line_right_x, line_right_y, line_mid_x, line_mid_y = [], [], [], [], [], []
     mid_range = frame.shape[1] * (mid_range_ret/100)  # Define a range around the middle mid_range_ret% of the frame width
 
@@ -118,23 +120,22 @@ def find_lines_with_hough_transform(edges, frame, mid_range_ret=22, mid_ret = 0.
             slope = (y2 - y1) / (x2 - x1 + 1e-8)  # Calculate the slope
 
             # Right lines
-            if y1 > frame.shape[0] * mid_ret + mid_range and -1.8 < slope < 0:
+            if y1 > frame.shape[0] * mid_ret + mid_range and -2.4 < slope < 0:
                 line_right_x.extend([x1, x2])
                 line_right_y.extend([y1, y2])
             # Left lines
-            elif y1 < frame.shape[0] * mid_ret - mid_range and 0 < slope < 1.4:
+            elif y1 < frame.shape[0] * mid_ret - mid_range and 0 < slope < 2.4:
                 line_left_x.extend([x1, x2])
                 line_left_y.extend([y1, y2])
             # Midline
-            elif np.abs(slope) < 0.8:
+            elif np.abs(slope) < 1:
                 line_mid_x.extend([x1, x2])
                 line_mid_y.extend([y1, y2])
 
     return np.array(line_left_x), np.array(line_left_y), np.array(line_right_x), np.array(line_right_y), np.array(line_mid_x), np.array(line_mid_y)
 
 
-
-def ransac_line_fit(x, y, threshold=15, num_iterations=1000, min_inliers=2):
+def ransac_line_fit(x, y, threshold=10, num_iterations=1000, min_inliers=5):
     best_line = None
     best_inliers_indices = []
 
@@ -147,21 +148,24 @@ def ransac_line_fit(x, y, threshold=15, num_iterations=1000, min_inliers=2):
         sample_x = x[sample_indices]
         sample_y = y[sample_indices]
         
-        # Fit a line to the sampled points
-        warnings.filterwarnings('ignore')
-        line_params = np.polyfit(sample_x, sample_y, 1)
-        line_function = np.poly1d(line_params)
-        
-        # Calculate distances of all points to the line
-        distances = np.abs(line_function(x) - y)
-        
-        # Find inliers (points closer than threshold)
-        inliers_indices = np.where(distances < threshold)[0]
-        if len(inliers_indices) >= min_inliers:
-            if len(inliers_indices) > len(best_inliers_indices):
+        try:
+            # Fit a line to the sampled points
+            warnings.filterwarnings('ignore')  # Ignore polyfit warnings
+            line_params = np.polyfit(sample_x, sample_y, 1)
+            line_function = np.poly1d(line_params)
+            
+            # Calculate distances of all points to the line
+            distances = np.abs(line_function(x) - y)
+            
+            # Find inliers (points closer than threshold)
+            inliers_indices = np.where(distances < threshold)[0]
+            if len(inliers_indices) >= min_inliers and len(inliers_indices) > len(best_inliers_indices):
                 best_inliers_indices = inliers_indices
                 best_line = line_params
-        
+                
+        except np.linalg.LinAlgError:
+            # Handle the case where SVD did not converge
+            continue  # Skip this iteration and try a new sample
     
     return best_line, best_inliers_indices
 
@@ -230,13 +234,12 @@ def update_line(curr_line, new_line_data):
     updated_line = combine_lines(curr_line, new_line[0])
     return updated_line , new_line
 
-
 def draw_line_if_exists(frame, line, color, thickness):
     if line is not None:
         draw_line_on_frame(frame, line, color=color, thickness=thickness)
         
 
-def process_video_frames(frames, max_mid_time=60):
+def process_video_frames(frames, max_mid_time=70):
     """
     Processes each frame from the video, updating and drawing lane lines, midline, and the mid-range area for debugging.
     Parameters:
@@ -262,13 +265,15 @@ def process_video_frames(frames, max_mid_time=60):
         curr_mid_line, _ = update_line(curr_mid_line, (line_mid_x, line_mid_y))
 
         if mid_counter != 1 or curr_mid_line is not None:
-            if mid_counter == 1:
-                curr_left_line, curr_right_line = None, None
             # Draw midline
+            if mid_counter < 2:
+                curr_left_line = curr_right_line = None
+
             if mid_counter % max_mid_time == 0:
                 curr_mid_line = None
                 mid_counter = 0
             mid_counter += 1
+            draw_line_if_exists(processed_frame, curr_mid_line, color=(0, 255, 255), thickness=2)
         else:
             # Draw left and right lines
             draw_line_if_exists(processed_frame, curr_right_line, color=(0, 255, 0), thickness=2)  # Green for right line
@@ -284,7 +289,6 @@ def process_video_frames(frames, max_mid_time=60):
 
 
     return n_frames  # Return the list of processed frames
-
 
 
 def display_frames(n_frames, delay=25):
@@ -304,7 +308,8 @@ def display_frames(n_frames, delay=25):
 
 def main():
     video_path = "data/roadCam.mp4"
-    frames = extract_frames(video_path, frame_skip=2)
+    frames = extract_frames(video_path, frame_skip=1)
+    n_frames =[]
     n_frames = process_video_frames(frames)
     display_frames(n_frames, 25)
 
