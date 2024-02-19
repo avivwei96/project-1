@@ -36,7 +36,7 @@ def extract_frames(video_path, frame_skip=1):
 
 
 def cropLandScapeAndRotate(frame, height_top=0.6, height_bot=0.9, width_l=0.15, width_r=0.8):
-    # Crop the frame to keep only the bottom three-fifths of the height and the middle three-fifths of the width
+    # Crop the frame to keep only the relevent part
     height, width = frame.shape[:2]
     cropped_frame = frame[int(height * height_top):int(height * height_bot) , int(width * width_l):int(width * width_r)].copy()
     frame[int(height * height_top):int(height * height_bot) , int(width * width_l):int(width * width_r)] = [0, 0, 0]
@@ -108,7 +108,7 @@ def crop_right_corners(image, top_corner_size=50, bottom_corner_size=100):
     return cropped_image
 
 
-def find_lines_with_hough_transform(edges, frame, mid_range_ret=25, mid_ret = 0.47, hough_threshold=15, minLineLength=5, maxLineGap=25):
+def find_lines_with_hough_transform(edges, frame, mid_range_ret=30, mid_ret = 0.5, hough_threshold=15, minLineLength=5, maxLineGap=25):
     lines = cv2.HoughLinesP(edges, rho=1, theta=np.pi/180, threshold=hough_threshold, minLineLength=minLineLength, maxLineGap=maxLineGap)
     line_left_x, line_left_y, line_right_x, line_right_y, line_mid_x, line_mid_y = [], [], [], [], [], []
     mid_range = frame.shape[1] * (mid_range_ret/100)  # Define a range around the middle mid_range_ret% of the frame width
@@ -226,13 +226,8 @@ def process_frame(frame):
 def update_line(curr_line, new_line_data):
     new_line = ransac_line_fit(new_line_data[0], new_line_data[1])
     updated_line = combine_lines(curr_line, new_line[0])
-    return updated_line
-
-
-def update_line(curr_line, new_line_data):
-    new_line = ransac_line_fit(new_line_data[0], new_line_data[1])
-    updated_line = combine_lines(curr_line, new_line[0])
     return updated_line , new_line
+
 
 def draw_line_if_exists(frame, line, color, thickness):
     if line is not None:
@@ -262,7 +257,7 @@ def process_video_frames(frames, max_mid_time=70):
         # Update and draw lines based on detections
         curr_left_line, _ = update_line(curr_left_line, (line_left_x, line_left_y))
         curr_right_line, _ = update_line(curr_right_line, (line_right_x, line_right_y))
-        curr_mid_line, _ = update_line(curr_mid_line, (line_mid_x, line_mid_y))
+        curr_mid_line, n_mid = update_line(curr_mid_line, (line_mid_x, line_mid_y))
 
         if mid_counter != 1 or curr_mid_line is not None:
             # Draw midline
@@ -273,7 +268,8 @@ def process_video_frames(frames, max_mid_time=70):
                 curr_mid_line = None
                 mid_counter = 0
             mid_counter += 1
-            draw_line_if_exists(processed_frame, curr_mid_line, color=(0, 255, 255), thickness=2)
+            if n_mid is None:
+                curr_mid_line = curr_left_line
         else:
             # Draw left and right lines
             draw_line_if_exists(processed_frame, curr_right_line, color=(0, 255, 0), thickness=2)  # Green for right line
@@ -306,12 +302,28 @@ def display_frames(n_frames, delay=25):
     cv2.destroyAllWindows()
 
 
+def save_frames_as_video(frames, output_path, fps):
+    # Determine the width and height of frames
+    height, width, _ = frames[0].shape
+
+    # Initialize VideoWriter object
+    fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+    out = cv2.VideoWriter(output_path, fourcc, fps, (width, height))
+
+    # Write frames to video
+    for frame in frames:
+        out.write(frame)
+
+    # Release VideoWriter
+    out.release()
+    print(f"Video saved as {output_path}")
+
+
 def main():
     video_path = "data/roadCam.mp4"
     frames = extract_frames(video_path, frame_skip=1)
-    n_frames =[]
     n_frames = process_video_frames(frames)
-    display_frames(n_frames, 25)
+    save_frames_as_video(n_frames, "data/main_project_res.mp4", fps=25)
 
 if __name__ == "__main__":
     main()
